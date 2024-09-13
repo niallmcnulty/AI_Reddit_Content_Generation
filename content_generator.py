@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from config import Config
 import time
 import markdown2
+import psycopg2
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
@@ -29,6 +31,23 @@ openai.api_key = Config.OPENAI_API_KEY
 
 # Initialize WordPress client
 wp = Client(Config.WP_URL, Config.WP_USERNAME, Config.WP_PASSWORD)
+
+def get_db_connection():
+    database_url = os.environ['DATABASE_URL']
+    conn = psycopg2.connect(database_url, sslmode='require')
+    return conn
+
+def initialize_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS processed_posts (
+            post_id TEXT PRIMARY KEY
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def fetch_reddit_post():
     print("Fetching Reddit post...")
@@ -90,7 +109,7 @@ def generate_article(data):
     """
 
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a skilled financial journalist writing for a South African audience."},
             {"role": "user", "content": prompt}
@@ -137,6 +156,7 @@ def post_to_wordpress(article):
 def main():
     try:
         print("Starting content generation process...")
+        initialize_db()  # Make sure to call this before fetching posts
         post = fetch_reddit_post()
         if post:
             data = prepare_data(post)
