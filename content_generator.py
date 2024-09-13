@@ -79,21 +79,28 @@ def fetch_reddit_post():
     return None
 
 def prepare_data(post):
-    if not post:
-        return None
+    print("Preparing data...")
+    comments = post.comments.list()
+    top_comments = []
+    for comment in comments[:3]:  # Get up to 3 top comments
+        if isinstance(comment, praw.models.Comment):
+            top_comments.append(comment.body)
     
-    title = post.title
-    content = post.selftext
-    top_comments = [comment.body for comment in post.comments.list()[:3]]
+    # Ensure we have at least 3 comments, even if they're empty
+    while len(top_comments) < 3:
+        top_comments.append("")
     
-    return {
-        "title": title,
-        "content": content,
-        "comments": top_comments
+    data = {
+        'title': post.title,
+        'content': post.selftext,
+        'comments': top_comments
     }
+    print("Data prepared.")
+    return data
 
 def generate_article(data):
     if not data:
+        print("No data provided for article generation.")
         return None
     
     prompt = f"""
@@ -108,20 +115,24 @@ def generate_article(data):
     Provide insights, analysis, and additional context. The article should be engaging and informative. Use the Reddit post and comments as source material but write the article as a traditional article for a publication. Don't reference the Reddit post, user or comments directly. Improve readability by writing shorter sentences and simpler language to target an 8th grade reading level.
     """
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": "You are a skilled financial journalist writing for a South African audience."},
-            {"role": "user", "content": prompt}
-        ]
-    )
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a skilled financial journalist writing for a South African audience."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        article = response.choices[0].message['content']
+    except Exception as e:
+        print(f"Error generating article: {str(e)}")
+        return None
 
-    article = response.choices[0].message['content']
-    
     # Ensure the article starts with a title
     if not article.startswith('Title:'):
         article = f"Title: {data['title']}\n\n{article}"
     
+    print(f"Article generated. First 100 characters: {article[:100]}...")
     return article
 
 def post_to_wordpress(article):
@@ -161,8 +172,11 @@ def main():
         if post:
             data = prepare_data(post)
             article = generate_article(data)
-            post_to_wordpress(article)
-            print("Article generated and posted successfully")
+            if article:
+                post_to_wordpress(article)
+                print("Article generated and posted successfully")
+            else:
+                print("Failed to generate article.")
         else:
             print("No suitable unprocessed posts found. Exiting.")
     except Exception as e:
