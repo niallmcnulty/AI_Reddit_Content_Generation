@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from config import Config
 import time
 import markdown2
+import psycopg2
+from urllib.parse import urlparse
 
 # Load environment variables
 load_dotenv()
@@ -30,16 +32,49 @@ openai.api_key = Config.OPENAI_API_KEY
 # Initialize WordPress client
 wp = Client(Config.WP_URL, Config.WP_USERNAME, Config.WP_PASSWORD)
 
+def get_db_connection():
+    database_url = os.environ['DATABASE_URL']
+    conn = psycopg2.connect(database_url, sslmode='require')
+    return conn
+
+def initialize_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS processed_posts (
+            post_id TEXT PRIMARY KEY
+        )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
 def fetch_reddit_post():
+    print("Fetching Reddit post...")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Load processed post IDs
+    cur.execute("SELECT post_id FROM processed_posts")
+    processed_posts = set(row[0] for row in cur.fetchall())
+    
     subreddit = reddit.subreddit("PersonalFinanceZA")
-    posts = list(subreddit.new(limit=50))
-    eligible_posts = [post for post in posts if post.num_comments >= 3 and post.created_utc > (time.time() - 86400)]
+    for post in subreddit.hot(limit=50):  # Increase limit if needed
+        if post.id not in processed_posts and not post.stickied and post.selftext:
+            # Add post ID to processed posts
+            cur.execute("INSERT INTO processed_posts (post_id) VALUES (%s)", (post.id,))
+            conn.commit()
+            
+            cur.close()
+            conn.close()
+            
+            print(f"Fetched post: {post.title}")
+            return post
     
-    if not eligible_posts:
-        logger.warning("No eligible posts found")
-        return None
-    
-    return random.choice(eligible_posts)
+    cur.close()
+    conn.close()
+    print("No suitable unprocessed posts found")
+    return None
 
 def prepare_data(post):
     if not post:
@@ -117,27 +152,21 @@ def post_to_wordpress(article):
     logger.info(f"Article posted to WordPress with ID: {post_id}")
 
 def main():
+    initialize_db()
     try:
-        print("Fetching Reddit post...")
+        print("Starting content generation process...")
         post = fetch_reddit_post()
-        print(f"Fetched post: {post.title}")
-
-        print("Preparing data...")
-        data = prepare_data(post)
-        print("Data prepared.")
-
-        print("Generating article...")
-        article = generate_article(data)
-        print(f"Article generated. First 100 characters: {article[:100]}...")
-
-        print("Posting to WordPress...")
-        post_to_wordpress(article)
-        print("Article posted to WordPress.")
-
-        logger.info("Article generated and posted successfully")
+        if post:
+            data = prepare_data(post)
+            article = generate_article(data)
+            post_to_wordpress(article)
+            print("Article generated and posted successfully")
+        else:
+            print("No suitable unprocessed posts found. Exiting.")
     except Exception as e:
-        logger.error(f"An error occurred: {str(e)}")
         print(f"An error occurred: {str(e)}")
+    finally:
+        print("Content generation process completed. Exiting.")
 
 if __name__ == "__main__":
     main()
