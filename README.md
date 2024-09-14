@@ -46,6 +46,3 @@ Adjust settings in the `.env` file:
 - OpenAI API key
 - WordPress credentials
 
-## Local Usage
-
-Run the script locally:
